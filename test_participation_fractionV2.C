@@ -1,3 +1,15 @@
+/*
+authors Johannes King  king.j@mpi-hd.mpg.de
+        Johannes.Veh@fau.de
+some code is taken from Vincents Scripts in calibrationmakers/scripts
+
+This is a preliminary run selection script for HESS2
+ 
+    Input is a runlist HAP style
+
+  
+*/
+
 // STL
 #include <iostream>
 #include <string>
@@ -26,12 +38,39 @@
 #include <summary/ParticipationFractionMaker.hh>
 #include <utilities/TextStyle.hh>
 
+// for nice debug output
+#define DEBUG 1 
+// 0 no output 
+// 1  output
+#include <utilities/debugging.hh>
 
-TH1D* make_ppf_histogram(int runnumber);
-TObjArray* get_list_of_histograms(std::vector<int> runlist);
 
 
 //%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+// We dont have optimised cut atm so you should use this values for your cuts
+
+// @JK kannst du die cuts comentieren? 
+// gibt es einen grund das du double nutzt? wenn es geht immer Float da es performanter ist
+// aufjedenfall sollten wir es einheitlich machen wenn du nix dagegen hast aender ich alles auf float
+Float_t mean_cut = 2;
+Float_t rms_cut = 0.5;
+Float_t garbage_cut = 62;
+Float_t mean_fit_cut = 0.6;
+Float_t outliers_cut = 225;
+
+
+
+
+
+
+
+
+
+
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+TH1D* make_ppf_histogram(int runnumber);
+TObjArray* get_list_of_histograms(std::vector<int> runlist);
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 int test_participation_fraction(std::string RunlistName){
   
@@ -55,7 +94,7 @@ int test_participation_fraction(std::string RunlistName){
     }
 
   TObjArray * histos = get_list_of_histograms(runlist);
-  std::string outRunlist = RunlistName.substr(0,RunlistName.find_last_of(".")-1)+"_passedPPFcuts.lis";
+  std::string outRunlist = RunlistName.substr(0,RunlistName.find_last_of("."))+"_passedPPFcuts.lis";
  
   ofstream saveFile;
   saveFile.open(outRunlist.c_str());
@@ -84,18 +123,18 @@ int test_participation_fraction(std::string RunlistName){
 
     overflow=histo->GetBinContent(histo->GetNbinsX()+1);  //Get Content of Garbage Bin
     if(overflow != 0){
-      cout << "Overflow Bin in PPF distribution not empty -> Check Binning" << endl;
+      WARN_OUT   << "Overflow Bin in PPF distribution not empty -> Check Binning" << endl;
       return 1;
     }//Code not yet able to handle this
     
-    if(mean > 2) {
-      cout << "\t Cut on Mean (>2)" << endl;
-      saveFile << runlist[i] << " " << 0 << " #failed cut on Mean(>2)\n";
+    if(mean > mean_cut) {
+      cout << "\t Cut on Mean (>"<<mean_cut<<")" << endl;
+      saveFile << runlist[i] << " " << 0 << " #failed cut on Mean(>"<< mean_cut<<")\n";
       continue;
     }
-    if(rms > 0.5) {
-      cout << "\t Cut on RMS (>0.5)" << endl;
-      saveFile << runlist[i] << " " << 0 << " #failed cut on RMS (>0.5)\n";
+    if(rms > rms_cut) {
+      cout << "\t Cut on RMS (>"<<rms_cut<<")" << endl;
+      saveFile << runlist[i] << " " << 0 << " #failed cut on RMS (>"<<rms_cut<<")\n";
       continue;
     }
     histo->GetXaxis()->SetRangeUser(-.5,.5);
@@ -103,14 +142,14 @@ int test_participation_fraction(std::string RunlistName){
     fit  = histo->GetFunction("gaus");
     mean_fit = fit->GetParameter(1);
 
-    if(mean_fit < 0.6){
-      cout << "\t Mean of fit: " << mean_fit << "(<0.6), Mean: " << mean << endl;
-      saveFile << runlist[i] << " " << 0 << " #failed cut mean_fit (<0.6)\n";
+    if(mean_fit < mean_fit_cut){
+      cout << "\t Mean of fit: " << mean_fit << "(<"<<mean_fit_cut<<"), Mean: " << mean << endl;
+      saveFile << runlist[i] << " " << 0 << " #failed cut mean_fit (<"<<mean_fit_cut<<")\n";
       continue;
     }
-    if(garbage > 62){ // = 1/2 bus = 4 drawers
+    if(garbage > garbage_cut){ // = 1/2 bus = 4 drawers
       cout << "\t Garbage bin: " << garbage << endl;
-      saveFile << runlist[i] << " " << 0 << " #failed cut on missing pixel (>62)\n";
+      saveFile << runlist[i] << " " << 0 << " #failed cut on missing pixel (>"<<garbage_cut<<")\n";
       continue;
      }
     sigma = fit->GetParameter(2);
@@ -118,9 +157,9 @@ int test_participation_fraction(std::string RunlistName){
     bin2=histo->GetXaxis()->FindBin(mean_fit+2*sigma);          
     outliers=histo->Integral(0,bin1)+histo->Integral(bin2,2);
     outliershist->Fill(outliers);
-    if(outliers > 255){
+    if(outliers > outliers_cut){
       cout << "\t Outliers    " << outliers << endl;
-      saveFile << runlist[i] << " " << 0 << " #failed cut on outliers (>255)\n";
+      saveFile << runlist[i] << " " << 0 << " #failed cut on outliers (>"<<outliers_cut<<")\n";
       continue;
     }
     // if(rms < 0.2){
@@ -263,13 +302,31 @@ TH1D* make_ppf_histogram(int runnumber){
   std::ostringstream fileName;
   fileName << "run_" << runnumber << "_ParticipationFraction_002.root";
 
+  std::ostringstream histname;
+  histname<<  "h_ppd_" << runnumber;
+  //  std::cout << "histname: " << histname.str().c_str() << std::endl;
+  //  TH1D* hist = new TH1D(histname.c_str(),"Pixel Participation Distribution",150,-1,2);
+  TH1D* hist = new TH1D(histname.str().c_str(),"Pixel Participation Distribution",6000,-1,5);
+
+
   if(!SashFile::FileExists(fileName.str().c_str()))
     {
-      MakeParticipationFraction(runnumber,true);
+     MakeParticipationFraction(runnumber,true);
     }
 
-  TFile* f = new TFile(fileName.str().c_str(),"READ");
- 
+  // this is a dirty hack to make sure we dont crash in case there is no DST file/PPF file
+  // I dont like to connect to files that often it makes us slow
+  // maybe we can implement a return value to MakeParticipationFraction ad check for that value
+  // also It would be nice to have a mode in MPF that doesnt open the result canvas slow again ;)
+  if(!SashFile::FileExists(fileName.str().c_str()))
+    {
+      WARN_OUT << "Could not find the DST of ppf file for run: " << runnumber
+		   << endl;
+      return hist;  
+    }
+
+
+  TFile* f = new TFile(fileName.str().c_str(),"READ"); 
 
   Sash::DataSet* data =  dynamic_cast<Sash::DataSet*>(f->Get("ParticipationFraction"));
   if( !data ) 
@@ -298,17 +355,11 @@ TH1D* make_ppf_histogram(int runnumber){
   TArrayD* pix_values = ppf->Flatten("Fraction");
   //std::cout << "#entries in camera: " << pix_values->GetSize() << std::endl;
    
-
   //  int pos = fileName.find("run");
   // std::string runnumber = fileName.substr(pos+4,5);
-  std::ostringstream histname;
-  histname<<  "h_ppd_" << runnumber;
-  //  std::cout << "histname: " << histname.str().c_str() << std::endl;
-  //  TH1D* hist = new TH1D(histname.c_str(),"Pixel Participation Distribution",150,-1,2);
-  TH1D* hist = new TH1D(histname.str().c_str(),"Pixel Participation Distribution",6000,-1,5);
+ 
 
   for (int i=0;i<pix_values->GetSize();i++){
-    //    cout << pix_values->GetAt(i) << endl;
     hist->Fill(pix_values->GetAt(i));
   }
   return hist;
