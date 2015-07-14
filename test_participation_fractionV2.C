@@ -1,11 +1,11 @@
 /*
 authors Johannes King  king.j@mpi-hd.mpg.de
-        Johannes.Veh@fau.de
+        Johannes Veh Johannes.Veh@fau.de
 some code is taken from Vincents Scripts in calibrationmakers/scripts
 
 This is a preliminary run selection script for HESS2
  
-    Input is a runlist HAP style
+    Input is a runlist HAP style providet by Vincents MakeQuickRunselection.C
 
   
 */
@@ -26,44 +26,23 @@ This is a preliminary run selection script for HESS2
 #include <TCanvas.h>
 #include <TStyle.h>
 #include <TFitResultPtr.h>
-
+#include <TLine.h>
 // HESS
 #include <sash/HESSArray.hh>
 #include <sash/DataSet.hh>
-#include <hdcalibration/TelescopeParticipation.hh>
 #include <sash/MakerChain.hh>
 #include <sash/TreeWriter.hh>
 #include <sashfile/HandlerC.hh>
 #include <sashfile/Utils.hh>
+#include <hdcalibration/TelescopeParticipation.hh>
 #include <summary/ParticipationFractionMaker.hh>
 #include <utilities/TextStyle.hh>
 
 // for nice debug output
-#define DEBUG 1 
+#define DEBUG 1
 // 0 no output 
 // 1  output
 #include <utilities/debugging.hh>
-
-
-
-//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-// We dont have optimised cut atm so you should use this values for your cuts
-
-// @JK kannst du die cuts comentieren? 
-// gibt es einen grund das du double nutzt? wenn es geht immer Float da es performanter ist
-// aufjedenfall sollten wir es einheitlich machen wenn du nix dagegen hast aender ich alles auf float
-Float_t mean_cut = 2;
-Float_t rms_cut = 0.5;
-Float_t garbage_cut = 62;
-Float_t mean_fit_cut = 0.6;
-Float_t outliers_cut = 225;
-
-
-
-
-
-
-
 
 
 
@@ -72,11 +51,15 @@ TH1D* make_ppf_histogram(int runnumber);
 TObjArray* get_list_of_histograms(std::vector<int> runlist);
 //%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-int test_participation_fraction(std::string RunlistName){
+int test_participation_fraction(std::string RunlistName,
+				Double_t mean_cut = 2,
+				Double_t rms_cut = 0.5,
+				Double_t garbage_cut = 62,
+				Double_t mean_fit_cut = 0.6,
+				Double_t outliers_cut = 225){
   
-  /*
-    Input is a runlist HAP style
-  */
+
+
   
   //  gStyle->SetOptStat(0);
 
@@ -86,12 +69,13 @@ int test_participation_fraction(std::string RunlistName){
   std::vector<std::string> tellist;
   int success = SashFile::ReadRunList( RunlistName, runlist, tellist );
   
-  std::cout << "read " << success << " runs." << std::endl;
-  
   if( !success )
     {
       std::cout << "cant read runlist file: " << RunlistName << std::endl;
+      return -1;
     }
+
+  std::cout << "read " << success << " runs." << std::endl;
 
   TObjArray * histos = get_list_of_histograms(runlist);
   std::string outRunlist = RunlistName.substr(0,RunlistName.find_last_of("."))+"_passedPPFcuts.lis";
@@ -101,16 +85,17 @@ int test_participation_fraction(std::string RunlistName){
 
   TF1 *fit;
   Double_t mean, rms, garbage, mean_fit, sigma, outliers, bin1, bin2, overflow;
+  int goodruns =0;
   TH1D * histo;
-  TH1D * min_bin      = new TH1D("Garbage_Bin","",1000,0,1000);  //run has 94352 n_min = 468!
+  TH1D * min_bin      = new TH1D("Garbage_Bin","",1000,0,1000);  //run has 94352 n_min = 468!  brauchen wir so viele bins?
   TH2D * rms_vs_mean  = new TH2D("rms_vs_mean","",200,0,2,300,-1,2);
-  TH1D * outliershist = new TH1D("outlierst","",2500,0,2500); 
+  TH1D * outliershist = new TH1D("outlierst","",2500,0,2500); // brauchen wir soviele bins?
   TH1D * rmshist      = new TH1D("rms","",200,0,2); 
   TH1D * meanhist     = new TH1D("mean","",300,-1,2); 
   
   for (int i=0;i<histos->GetEntriesFast();i++){
     histo = (TH1D*)histos->At(i);
-    cout << histo->GetName();
+   
 
     mean=histo->GetMean();
     meanhist->Fill(mean);
@@ -121,12 +106,12 @@ int test_participation_fraction(std::string RunlistName){
     garbage=histo->GetBinContent(1);  //Get Content of Garbage Bin
     min_bin->Fill(garbage);
 
-    overflow=histo->GetBinContent(histo->GetNbinsX()+1);  //Get Content of Garbage Bin
+    overflow=histo->GetBinContent(histo->GetNbinsX()+1);  
     if(overflow != 0){
-      WARN_OUT   << "Overflow Bin in PPF distribution not empty -> Check Binning" << endl;
-      return 1;
+      WARN_OUT   << histo->GetName() << " Overflow Bin in PPF distribution not empty -> Check Binning" << endl;
+      //return 1;
     }//Code not yet able to handle this
-    
+     INFO_OUT << histo->GetName();
     if(mean > mean_cut) {
       cout << "\t Cut on Mean (>"<<mean_cut<<")" << endl;
       saveFile << runlist[i] << " " << 0 << " #failed cut on Mean(>"<< mean_cut<<")\n";
@@ -138,10 +123,19 @@ int test_participation_fraction(std::string RunlistName){
       continue;
     }
     histo->GetXaxis()->SetRangeUser(-.5,.5);
+      fit = 0;
+      mean_fit = 0;
+  
+    if(0 == histo->GetEntries())
+      {
+	cout << "\t missing DST/ppf file" << endl;
+	saveFile << runlist[i] << " " << 0 << " #missing DST/ppf file /n";
+	continue;
+      }
     histo->Fit("gaus","0Q"); //do not store graphics
     fit  = histo->GetFunction("gaus");
     mean_fit = fit->GetParameter(1);
-
+    
     if(mean_fit < mean_fit_cut){
       cout << "\t Mean of fit: " << mean_fit << "(<"<<mean_fit_cut<<"), Mean: " << mean << endl;
       saveFile << runlist[i] << " " << 0 << " #failed cut mean_fit (<"<<mean_fit_cut<<")\n";
@@ -168,10 +162,23 @@ int test_participation_fraction(std::string RunlistName){
     // }
     cout << "\t ok" << endl;
     saveFile << runlist[i] << " " << tellist[i] << "\n";
+    goodruns++;
   }
 
   saveFile.close();
-  std::cout << "Your Runlist will be saved to: " << outRunlist<< std::endl;
+  // nice output ;) but ugly code :(
+  INFO_OUT;INFO_OUT; INFO_OUT;INFO_OUT; INFO_OUT;INFO_OUT; INFO_OUT;INFO_OUT; INFO_OUT;INFO_OUT; INFO_OUT;INFO_OUT; INFO_OUT;INFO_OUT; INFO_OUT;INFO_OUT; INFO_OUT;INFO_OUT; INFO_OUT;INFO_OUT; INFO_OUT;INFO_OUT; INFO_OUT;INFO_OUT; INFO_OUT;INFO_OUT; INFO_OUT;INFO_OUT; INFO_OUT;INFO_OUT; INFO_OUT;INFO_OUT<<std::endl;
+
+  INFO_OUT << "Your Runlist will be saved to: " << outRunlist<< std::endl;
+  INFO_OUT << "We found " << goodruns << " goodruns out of " <<histos->GetEntriesFast() <<std::endl;
+ 
+  if(DEBUG > 0)
+    {
+
+      std::cout << "__________________________________________________" <<std::endl;
+      std::cout << Utilities::TextStyle::Red() << "Redlines mark your cut values" <<  Utilities::TextStyle::Reset()<<std::endl;
+      std::cout << "__________________________________________________" <<std::endl;
+
   //Diagnostic plots
   TCanvas *canvas = new TCanvas("Default","Diagnostics Plots",1400,1000);
   canvas->Divide(3,2);
@@ -181,24 +188,48 @@ int test_participation_fraction(std::string RunlistName){
   min_bin->GetYaxis()->SetTitle("# entries");
   min_bin->Draw();
 
+  //plot a line marking our cut
+  TLine *line_garb = new TLine(garbage_cut,0,garbage_cut,min_bin->GetMaximum());
+  line_garb->SetLineColor(kRed);
+  line_garb->SetLineWidth(2);
+  line_garb->Draw("same");
+
+
   canvas->cd(2);
   rms_vs_mean->SetMarkerStyle(8);
   rms_vs_mean->GetXaxis()->SetTitle("RMS");
   rms_vs_mean->GetYaxis()->SetTitle("Mean");
   rms_vs_mean->Draw();
-  
+
+ 
   canvas->cd(3);
   //  outliershist->Fit("gaus");
   outliershist->Draw();
-  
+
+  TLine *line_out = new TLine(outliers_cut,0,outliers_cut,outliershist->GetMaximum());
+  line_out->SetLineColor(kRed);
+  line_out->SetLineWidth(2);
+  line_out->Draw("same");
+
+
   canvas->cd(4);
   //canvas2.SetLogy();
   //rmshist->Fit("gaus");
   rmshist->Draw();
 
+  TLine *line_rms = new TLine(rms_cut,0,rms_cut,rmshist->GetMaximum());
+  line_rms->SetLineColor(kRed);
+  line_rms->SetLineWidth(2);
+  line_rms->Draw("same");
+
   canvas->cd(5);
   meanhist->Draw();
-  
+
+  TLine *line_mean = new TLine(mean_cut,0,mean_cut,meanhist->GetMaximum());
+  line_mean->SetLineColor(kRed);
+  line_mean->SetLineWidth(2);
+  line_mean->Draw("same");
+}
   return 1;
 
 }
@@ -308,6 +339,12 @@ TH1D* make_ppf_histogram(int runnumber){
   //  TH1D* hist = new TH1D(histname.c_str(),"Pixel Participation Distribution",150,-1,2);
   TH1D* hist = new TH1D(histname.str().c_str(),"Pixel Participation Distribution",6000,-1,5);
 
+  /*
+if we have ppf files in a commen dir from vincent we need to access them here   
+
+*/
+
+
 
   if(!SashFile::FileExists(fileName.str().c_str()))
     {
@@ -316,13 +353,12 @@ TH1D* make_ppf_histogram(int runnumber){
 
   // this is a dirty hack to make sure we dont crash in case there is no DST file/PPF file
   // I dont like to connect to files that often it makes us slow
-  // maybe we can implement a return value to MakeParticipationFraction ad check for that value
+  // maybe we can implement a return value to MakeParticipationFraction as check for that value
   // also It would be nice to have a mode in MPF that doesnt open the result canvas slow again ;)
   if(!SashFile::FileExists(fileName.str().c_str()))
     {
-      WARN_OUT << "Could not find the DST of ppf file for run: " << runnumber
-		   << endl;
-      return hist;  
+      //   WARN_OUT << "Could not find the DST of ppf file for run: " << runnumber  << endl;
+      return hist;  //return empty hist
     }
 
 
