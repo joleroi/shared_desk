@@ -6,6 +6,7 @@ some code is taken from Vincents Scripts in calibrationmakers/scripts
 This is a preliminary run selection script for HESS2
  
     Input is a runlist HAP style providet by Vincents MakeQuickRunselection.C
+known bugs: script will crash if CT5 is not in a run
 
   
 */
@@ -109,43 +110,50 @@ int test_participation_fraction(std::string RunlistName,
     overflow=histo->GetBinContent(histo->GetNbinsX()+1);  
     if(overflow != 0){
       WARN_OUT   << histo->GetName() << " Overflow Bin in PPF distribution not empty -> Check Binning" << endl;
-      //return 1;
+      continue;
     }//Code not yet able to handle this
      INFO_OUT << histo->GetName();
-    if(mean > mean_cut) {
+
+
+  if(garbage > garbage_cut){ //62 = 1/2 bus = 4 drawers
+      cout << "\t Garbage bin: " << garbage << endl;
+      saveFile << runlist[i] << " " << 0 << " #failed cut on missing pixel (>"<<garbage_cut<<")\n";
+      continue;
+  }  
+  if(mean > mean_cut) {
       cout << "\t Cut on Mean (>"<<mean_cut<<")" << endl;
       saveFile << runlist[i] << " " << 0 << " #failed cut on Mean(>"<< mean_cut<<")\n";
       continue;
-    }
-    if(rms > rms_cut) {
+  }
+  if(rms > rms_cut) {
       cout << "\t Cut on RMS (>"<<rms_cut<<")" << endl;
       saveFile << runlist[i] << " " << 0 << " #failed cut on RMS (>"<<rms_cut<<")\n";
       continue;
-    }
-    histo->GetXaxis()->SetRangeUser(-.5,.5);
-      fit = 0;
-      mean_fit = 0;
-  
-    if(0 == histo->GetEntries())
-      {
+  }
+    histo->GetXaxis()->SetRangeUser(-.5,2.5);
+    
+    // std::cout << "bla" <<*histo->GetIntegral() << std::endl;
+    // std::cout << histo->GetEntries()  <<std::endl;  
+    if(0 == histo->GetEntries()){
 	cout << "\t missing DST/ppf file" << endl;
-	saveFile << runlist[i] << " " << 0 << " #missing DST/ppf file /n";
+	saveFile << runlist[i] << " " << 0 << " #missing DST/ppf file \n";
 	continue;
-      }
+    }
+    fit = 0;
+    mean_fit = 0;
     histo->Fit("gaus","0Q"); //do not store graphics
+    //  histo->Fit("gaus");   
     fit  = histo->GetFunction("gaus");
     mean_fit = fit->GetParameter(1);
+    // histo->Draw();    
+    // fit->Draw("same");
     
     if(mean_fit < mean_fit_cut){
       cout << "\t Mean of fit: " << mean_fit << "(<"<<mean_fit_cut<<"), Mean: " << mean << endl;
       saveFile << runlist[i] << " " << 0 << " #failed cut mean_fit (<"<<mean_fit_cut<<")\n";
       continue;
     }
-    if(garbage > garbage_cut){ // = 1/2 bus = 4 drawers
-      cout << "\t Garbage bin: " << garbage << endl;
-      saveFile << runlist[i] << " " << 0 << " #failed cut on missing pixel (>"<<garbage_cut<<")\n";
-      continue;
-     }
+     
     sigma = fit->GetParameter(2);
     bin1=histo->GetXaxis()->FindBin(mean_fit-2*sigma);           
     bin2=histo->GetXaxis()->FindBin(mean_fit+2*sigma);          
@@ -194,13 +202,11 @@ int test_participation_fraction(std::string RunlistName,
   line_garb->SetLineWidth(2);
   line_garb->Draw("same");
 
-
   canvas->cd(2);
   rms_vs_mean->SetMarkerStyle(8);
   rms_vs_mean->GetXaxis()->SetTitle("RMS");
   rms_vs_mean->GetYaxis()->SetTitle("Mean");
   rms_vs_mean->Draw();
-
  
   canvas->cd(3);
   //  outliershist->Fit("gaus");
@@ -210,7 +216,6 @@ int test_participation_fraction(std::string RunlistName,
   line_out->SetLineColor(kRed);
   line_out->SetLineWidth(2);
   line_out->Draw("same");
-
 
   canvas->cd(4);
   //canvas2.SetLogy();
@@ -269,6 +274,7 @@ void MakeParticipationFraction(Int_t nrun, Bool_t save=true) {
   Sash::MakerChain *fChain = new Sash::MakerChain("Calibration Chain",true,false);
   
   //  Summary::ParticipationFractionMaker *spf = new Summary::ParticipationFractionMaker("^DST$",analysisname.c_str(),"Clean0407",5.,true);
+  //Summary::ParticipationFractionMaker *spf = new Summary::ParticipationFractionMaker("^DST$",analysisname.c_str(),"Extended0407",5.,true);
   Summary::ParticipationFractionMaker *spf = new Summary::ParticipationFractionMaker("^DST$",analysisname.c_str(),"Extended0407",5.,true);
   
   fChain->UseMaker( spf );
@@ -278,7 +284,6 @@ void MakeParticipationFraction(Int_t nrun, Bool_t save=true) {
   fWriter->AddInputFolder( analysisname.c_str() );
   fWriter->SetOutDir(outfile);
   if (save) { fChain->UseMaker( fWriter ); }
-
 
   // Loop on Events :
   TStopwatch glob_watch;
@@ -297,10 +302,13 @@ void MakeParticipationFraction(Int_t nrun, Bool_t save=true) {
   glob_watch.Stop();
 
   std::cout << "Time to make ParticipationFraction = " << glob_watch.RealTime() << " s (" << glob_watch.CpuTime() << " s)" << std::endl;
-
   std::cout << "Deleting fChain" << std::endl;
-  if (save) delete fChain;
 
+  if (save){
+    fChain->ClearChains();
+    delete fChain;
+    
+  }
 }
 
 
@@ -342,9 +350,14 @@ TH1D* make_ppf_histogram(int runnumber){
   /*
 if we have ppf files in a commen dir from vincent we need to access them here   
 
-*/
 
 
+
+
+if (!file->IsOpen() || file->IsZombie()) {
+    return false; // return what should be interpreted as bad in the script
+} 
+  */
 
   if(!SashFile::FileExists(fileName.str().c_str()))
     {
@@ -361,15 +374,16 @@ if we have ppf files in a commen dir from vincent we need to access them here
       return hist;  //return empty hist
     }
 
-
-  TFile* f = new TFile(fileName.str().c_str(),"READ"); 
+  DEBUG_OUT << "open ppf file" <<std::endl;
+ TFile* f = new TFile(fileName.str().c_str(),"READ"); 
+ 
 
   Sash::DataSet* data =  dynamic_cast<Sash::DataSet*>(f->Get("ParticipationFraction"));
   if( !data ) 
     return NULL;
   else{
     data->GetEntry(0);
-    //std::cout << "Loading Participation Fraction Data Set" << std::endl;
+   DEBUG_OUT << "Loading Participation Fraction Data Set" << std::endl;
     //data->Print();
   }
 
@@ -378,26 +392,38 @@ if we have ppf files in a commen dir from vincent we need to access them here
     return NULL;
   else{
     run->GetEntry(0);
-    //std::cout << "Loading run Data Set" << std::endl;
+    DEBUG_OUT << "Loading run Data Set" << std::endl;
     //run->Print();
   }
 
 
-  Sash::HESSArray* hess = &Sash::HESSArray::GetHESSArray();  
+  Sash::HESSArray* hess = &Sash::HESSArray::GetHESSArray(); 
+  // we need a check here since this line will crash us if we dont have CT5 in the run
+
+  /*
+Sash::Pointerset* tels = hess->GetTelsInRun();
+
+ std::vector<Telescope>::iterator t_it = tels.begin();
+    for( ; t_it != tels.end(); ++t_it ) {
+    if(5 == t_it->GetId())
+    {
+   */
+
   Sash::Telescope* tel = hess->GetTel(5);
   
   const HDCalibration::TelescopeParticipation *ppf = tel->Get<HDCalibration::TelescopeParticipation>();
  
   TArrayD* pix_values = ppf->Flatten("Fraction");
-  //std::cout << "#entries in camera: " << pix_values->GetSize() << std::endl;
+  DEBUG_OUT << "#entries in camera: " << pix_values->GetSize() << std::endl;
    
   //  int pos = fileName.find("run");
   // std::string runnumber = fileName.substr(pos+4,5);
  
-
   for (int i=0;i<pix_values->GetSize();i++){
     hist->Fill(pix_values->GetAt(i));
   }
+  //}
+  //}
   return hist;
   
 }
